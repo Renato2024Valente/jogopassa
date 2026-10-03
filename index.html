@@ -237,7 +237,7 @@ footer{text-align:center;color:#718099;font-size:11px;padding:16px 0 0}
       <option value="20">20 segundos</option>
       <option value="30">30 segundos</option>
     </select>
-    <button id="timerStart" class="b-dark">▶ CRONÔMETRO</button>
+    <button id="timerStart" class="b-dark">▶ CRONÔMETRO + TIC-TAC</button>
     <button id="timerReset" class="b-dark">↺ TEMPO</button>
 
     <label class="volume">
@@ -276,6 +276,7 @@ footer{text-align:center;color:#718099;font-size:11px;padding:16px 0 0}
       <div class="row"><span>Contexto seguro</span><strong id="secureSupport">verificando...</strong></div>
       <div class="row"><span>Baud rate</span><strong>9600</strong></div>
       <div class="row"><span>Som</span><strong>sirene-passa-ou-repassa.mp3</strong></div>
+      <div class="row"><span>Cronômetro</span><strong>TIC a cada segundo</strong></div>
       <div class="row"><span>Modo</span><strong id="modeLabel">NORMAL</strong></div>
     </div>
   </div>
@@ -308,7 +309,45 @@ let timerTotal = 15;
 let timerRemaining = 15;
 let timerId = null;
 
+
 const siren = $("sirenAudio");
+
+let tickAudioCtx = null;
+let lastTickSecond = null;
+
+async function ensureTickAudio(){
+  if(!tickAudioCtx){
+    tickAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if(tickAudioCtx.state === "suspended"){
+    await tickAudioCtx.resume();
+  }
+}
+
+async function playTick(urgent=false){
+  try{
+    await ensureTickAudio();
+
+    const now = tickAudioCtx.currentTime;
+    const osc = tickAudioCtx.createOscillator();
+    const gain = tickAudioCtx.createGain();
+
+    osc.type = "square";
+    osc.frequency.setValueAtTime(urgent ? 1450 : 1050, now);
+
+    gain.gain.setValueAtTime(urgent ? 0.16 : 0.09, now);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + (urgent ? 0.09 : 0.065));
+
+    osc.connect(gain);
+    gain.connect(tickAudioCtx.destination);
+
+    osc.start(now);
+    osc.stop(now + (urgent ? 0.10 : 0.075));
+  }catch(e){
+    console.warn("Tick indisponível:", e);
+  }
+}
+
 
 function log(msg){
   const d=document.createElement("div");
@@ -472,23 +511,45 @@ function resetTimer(){
   timerId=null;
   timerTotal=Number($("timerSelect").value);
   timerRemaining=timerTotal;
+  lastTickSecond=Math.ceil(timerRemaining);
   renderTimer();
 }
 
 function startTimer(){
   resetTimer();
+
+  // Libera o áudio do tic após o clique do usuário.
+  ensureTickAudio();
+
   const started=performance.now();
+
   timerId=setInterval(()=>{
     timerRemaining=Math.max(0,timerTotal-(performance.now()-started)/1000);
+
+    const segundoAtual=Math.ceil(timerRemaining);
+
+    if(segundoAtual>0 && segundoAtual!==lastTickSecond){
+      lastTickSecond=segundoAtual;
+
+      // Últimos 5 segundos: tic mais forte/agudo
+      playTick(segundoAtual<=5);
+    }
+
     renderTimer();
+
     if(timerRemaining<=0){
-      clearInterval(timerId); timerId=null;
+      clearInterval(timerId);
+      timerId=null;
+      timerRemaining=0;
+      renderTimer();
+
       $("gameStatus").textContent="TEMPO ESGOTADO!";
       $("gameStatus").className="status red";
+
       playSiren();
       log("Tempo esgotado.");
     }
-  },80);
+  },50);
 }
 
 function supportCheck(){
